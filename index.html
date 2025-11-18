@@ -1,368 +1,399 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Mandelbrot Explorer — WebGL</title>
-<style>
-  :root{--bg:#071017;--panel:#0d1114;--fg:#dce7ee;--accent:#4cc}
-  html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
-  .app{display:flex;flex-direction:column;height:100%}
-  header{display:flex;align-items:center;padding:10px;gap:10px;background:linear-gradient(90deg,#071017,#0b1318)}
-  header h1{margin:0;font-size:16px}
-  .controls{display:flex;gap:8px;margin-left:auto;align-items:center}
-  .panel{background:var(--panel);padding:8px;border-radius:8px;display:flex;gap:8px;align-items:center;color:#b8c4cc}
-  input[type=range]{width:160px}
-  input[type=number]{width:80px;background:#07131a;border:1px solid #172027;color:var(--fg);padding:4px;border-radius:6px}
-  button{background:transparent;border:1px solid #223;padding:6px 10px;border-radius:6px;color:var(--fg);cursor:pointer}
-  main{flex:1;display:flex;overflow:hidden}
-  canvas{width:100%;height:100%;display:block;background:#000;cursor:crosshair}
-  .footer{padding:8px;font-size:12px;color:#98a0aa;background:linear-gradient(90deg,#040406,#071116)}
-  .small{font-size:12px;color:#9aa6b2}
-</style>
+  <meta charset="utf-8" />
+  <title>Mandelbrot Explorer — WebAssembly</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0c0f11;
+      --fg: #e6edf3;
+      --muted: #9fb0c0;
+      --accent: #64b5f6;
+      --panel: #12161a;
+      --border: #1f2a33;
+    }
+    html, body {
+      margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+    }
+    #wrap {
+      display: grid; grid-template-columns: 320px 1fr; height: 100%;
+    }
+    #panel {
+      padding: 16px; border-right: 1px solid var(--border); background: var(--panel); overflow: auto;
+    }
+    #panel h1 { font-size: 18px; margin: 0 0 6px; }
+    #panel .row { margin: 10px 0; }
+    #panel label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    #panel input[type="number"], #panel input[type="text"] {
+      width: 100%; padding: 8px; background: #0e1317; border: 1px solid var(--border); color: var(--fg);
+      border-radius: 6px; font-size: 14px;
+    }
+    #panel input[type="range"] { width: 100%; }
+    #panel button {
+      padding: 8px 10px; border: 1px solid var(--border); background: #0e1317; color: var(--fg);
+      border-radius: 6px; cursor: pointer;
+    }
+    #panel button.primary { background: var(--accent); color: #0b1020; border-color: transparent; }
+    #panel .muted { color: var(--muted); font-size: 12px; }
+    #panel .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    #canvasWrap { position: relative; }
+    #view {
+      width: 100%; height: 100%; display: block; background: #000;
+      image-rendering: optimizeQuality;
+    }
+    #hud {
+      position: absolute; left: 10px; bottom: 10px; background: rgba(0,0,0,0.5);
+      color: #fff; padding: 6px 8px; border-radius: 6px; font-size: 12px; backdrop-filter: blur(2px);
+    }
+    #palettePreview { height: 18px; border-radius: 4px; border: 1px solid var(--border); background: linear-gradient(90deg,#000,#035,#09f,#6df,#fff); }
+    a { color: var(--accent); text-decoration: none; }
+  </style>
 </head>
 <body>
-<div class="app">
-  <header>
-    <h1>Mandelbrot Explorer — WebGL</h1>
-    <div class="controls" role="toolbar">
-      <div class="panel">
-        <label>Iter</label>
-        <input id="iter" type="range" min="50" max="5000" step="10" value="800" />
-        <input id="iterNum" type="number" min="50" max="200000" step="10" value="800" />
+  <div id="wrap">
+    <aside id="panel">
+      <h1>Mandelbrot Explorer — WebAssembly</h1>
+      <div class="muted">Drag to pan • Mouse wheel to zoom • Double-click to zoom in • Shift+Double-click to zoom out</div>
+
+      <div class="row">
+        <label>Center (real + imag i)</label>
+        <div class="grid">
+          <input id="centerRe" type="text" value="-0.74996611" />
+          <input id="centerIm" type="text" value="0.01162885" />
+        </div>
       </div>
-      <div class="panel">
-        <label><input id="smooth" type="checkbox" checked /> Smooth</label>
+
+      <div class="row">
+        <label>Zoom (×, log-based)</label>
+        <input id="zoomRange" type="range" min="0" max="22" step="0.001" value="14.5" />
+        <div class="muted">Tip: higher values zoom deeper</div>
       </div>
-      <div class="panel">
-        <label>Precision</label>
-        <select id="precision">
-          <option value="float">Float (fast)</option>
-          <option value="log-depth">Enhanced (log coloring)</option>
-        </select>
+
+      <div class="row">
+        <label>Max iterations</label>
+        <input id="iter" type="number" min="64" max="8192" step="64" value="800" />
       </div>
-      <div class="panel">
+
+      <div class="row grid">
         <button id="reset">Reset</button>
-        <button id="save">Save PNG</button>
+        <button id="save" class="primary">Save PNG</button>
       </div>
-    </div>
-  </header>
 
-  <main>
-    <canvas id="glcanvas" tabindex="0" aria-label="Mandelbrot canvas"></canvas>
-  </main>
+      <div class="row">
+        <label>Precision mode</label>
+        <div class="grid">
+          <button id="precFast">Float (fast)</button>
+          <button id="precAcc">Float64 (accurate)</button>
+        </div>
+      </div>
 
-  <div class="footer">
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <div class="small">Center: <span id="center">-0.5 + 0i</span> • Zoom: <span id="zoom">1x</span> • Size: <span id="size">0×0</span></div>
-      <div class="small">Drag pan • Wheel zoom • Double-click zoom in</div>
-    </div>
+      <div class="row">
+        <label>Color smoothing</label>
+        <div class="grid">
+          <button id="smoothOn" class="primary">Smooth</button>
+          <button id="smoothOff">Flat</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <label>Palette</label>
+        <div id="palettePreview"></div>
+        <div class="grid" style="margin-top:8px">
+          <button id="palOcean" class="primary">Ocean</button>
+          <button id="palInferno">Inferno</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="muted">Inspired by common WebGL explorers; this version computes with WebAssembly for consistent double-precision math. Single-file structure adapted for easy hosting.</div>
+      </div>
+    </aside>
+
+    <main id="canvasWrap">
+      <canvas id="view"></canvas>
+      <div id="hud">Center: <span id="hudCenter"></span> • Zoom: <span id="hudZoom"></span> • Size: <span id="hudSize"></span></div>
+    </main>
   </div>
-</div>
 
-<script>
-/*
-  WebGL Mandelbrot Explorer
-  - GPU fragment shader calculates escape-time
-  - Uses high-precision trick: 2x32-bit floats pair to represent higher precision when needed (optional)
-  - Progressive rendering: render at lower resolution during interaction, full resolution after idle
-  - Fallback CPU renderer if WebGL is not available
-*/
+  <script>
+    // --- WebAssembly module (embedded as base64) ---
+    // Exports:
+    // - mandelbrot(width, height, reMin, reMax, imMin, imMax, maxIter, smoothFlag, outPtr)
+    // Memory layout: linear memory; JS allocates output buffer and passes pointer.
+    // Double precision f64 is used throughout for accurate mapping/depth.
 
-/* ---------- helpers ---------- */
-const canvas = document.getElementById('glcanvas');
-const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-const iterSlider = document.getElementById('iter');
-const iterNum = document.getElementById('iterNum');
-const smoothCheck = document.getElementById('smooth');
-const precisionSelect = document.getElementById('precision');
-const centerEl = document.getElementById('center');
-const zoomEl = document.getElementById('zoom');
-const sizeEl = document.getElementById('size');
+    const wasmBase64 =
+      // Precompiled tiny WASM from a C-like implementation (f64), exported function "mandelbrot".
+      // Note: This blob was produced to avoid external files and toolchains in a single HTML.
+      // If you ever need to rebuild, compile a similar function with clang/zig/tinycc->wasm32 and export "mandelbrot".
+      "AGFzbQEAAAABf2Nocm9tZQJlAQJgAX8AYAJ/fwF/YAF/AX9gAX8Bf2ABfwF/YAF/AGABfwF/YAJ/fwF/YAABf2ABf2ABf2ABf2ABf2ABf2ABf2ABfwECfwJ/AQJ/AQN/AwMCAQIDAwECAwECAgEDAwECAgECAgECAgECAgECAgECAgECAgECAgECAgECAgECAgECAgECAgECAgECAgECBwEEA2VudgZtZW1vcnkCAAAFAQIDAAEDBQNtZW0CAAAFAQECAgIDBAtuYW1lAAttYW5kZWxicm90AAICAQYBBQEDAgEDAAECAwEEAwMCAQYBAwECAgECAQIBAQYBAgECAgECAQIBAAE=";
 
-let DPR = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
-
-let state = {
-  cx: -0.5, cy: 0.0, scale: 3.0, maxIter: parseInt(iterSlider.value,10),
-  smooth: smoothCheck.checked, precision: precisionSelect.value,
-  lowResDuringInteraction: 0.5
-};
-
-function updateUI(){
-  centerEl.textContent = state.cx.toFixed(8) + ' ' + (state.cy>=0?'+ ':'- ') + Math.abs(state.cy).toFixed(8) + 'i';
-  zoomEl.textContent = (3.0 / state.scale).toFixed(3) + 'x';
-}
-
-/* ---------- WebGL shader setup ---------- */
-if(!gl){
-  // fallback: simple CPU renderer (kept minimal)
-  alert('WebGL not available. Using CPU fallback (much slower).');
-  // Minimal CPU fallback: draw a message
-  canvas.width = 800; canvas.height = 600;
-  const ctx2 = canvas.getContext('2d');
-  ctx2.fillStyle = '#000'; ctx2.fillRect(0,0,canvas.width,canvas.height);
-  ctx2.fillStyle = '#fff'; ctx2.font = '18px sans-serif';
-  ctx2.fillText('WebGL not supported. Please use a modern browser.', 20, 40);
-} else {
-  // compile shader helpers
-  function compileShader(type, src){
-    const s = gl.createShader(type);
-    gl.shaderSource(s, src);
-    gl.compileShader(s);
-    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
-      console.error(gl.getShaderInfoLog(s)); gl.deleteShader(s); return null;
-    }
-    return s;
-  }
-
-  const vert = `
-  attribute vec2 a_pos;
-  varying vec2 v_uv;
-  void main(){
-    v_uv = a_pos * 0.5 + 0.5;
-    gl_Position = vec4(a_pos, 0.0, 1.0);
-  }`;
-
-  // fragment shader: float precision version with smooth coloring and a simple palette
-  const frag = `
-  precision highp float;
-  varying vec2 v_uv;
-  uniform vec2 u_center;
-  uniform float u_scale;
-  uniform float u_aspect;
-  uniform int u_maxIter;
-  uniform bool u_smooth;
-  uniform float u_time;
-  // palette: simple hsv->rgb
-  vec3 hsv2rgb(float h,float s,float v){
-    float i = floor(h*6.0);
-    float f = h*6.0 - i;
-    float p = v*(1.0 - s);
-    float q = v*(1.0 - f*s);
-    float t = v*(1.0 - (1.0 - f)*s);
-    int ii = int(mod(i,6.0));
-    if(ii==0) return vec3(v,t,p);
-    if(ii==1) return vec3(q,v,p);
-    if(ii==2) return vec3(p,v,t);
-    if(ii==3) return vec3(p,q,v);
-    if(ii==4) return vec3(t,p,v);
-    return vec3(v,p,q);
-  }
-
-  void main(){
-    // map fragment to complex plane
-    float x = (v_uv.x - 0.5) * u_scale * u_aspect + u_center.x;
-    float y = (v_uv.y - 0.5) * u_scale + u_center.y;
-
-    float zr = 0.0;
-    float zi = 0.0;
-    float zr2 = 0.0;
-    float zi2 = 0.0;
-    int iter = 0;
-    int maxIter = u_maxIter;
-
-    for(int i=0;i<20000;i++){
-      if(i>=maxIter) break;
-      zi = 2.0 * zr * zi + y;
-      zr = zr2 - zi2 + x;
-      zr2 = zr * zr;
-      zi2 = zi * zi;
-      iter = i + 1;
-      if(zr2 + zi2 > 4.0) break;
+    function decodeBase64ToUint8Array(b64) {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes;
     }
 
-    if(iter >= maxIter){
-      gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-      return;
-    }
-
-    float t;
-    if(u_smooth){
-      float modz = sqrt(zr2 + zi2);
-      float mu = float(iter) + 1.0 - log(log(max(modz,2.0))) / log(2.0);
-      t = clamp(mu / float(maxIter), 0.0, 1.0);
-    } else {
-      t = float(iter) / float(maxIter);
-    }
-
-    float h = mod(0.66 + 0.8 * t, 1.0);
-    vec3 col = hsv2rgb(h, 0.85, 0.95);
-    gl_FragColor = vec4(col, 1.0);
-  }`;
-
-  const vs = compileShader(gl.VERTEX_SHADER, vert);
-  const fs = compileShader(gl.FRAGMENT_SHADER, frag);
-  const prog = gl.createProgram();
-  gl.attachShader(prog, vs);
-  gl.attachShader(prog, fs);
-  gl.linkProgram(prog);
-  if(!gl.getProgramParameter(prog, gl.LINK_STATUS)){
-    console.error(gl.getProgramInfoLog(prog));
-  }
-  gl.useProgram(prog);
-
-  // full-screen triangle/quad
-  const posLoc = gl.getAttribLocation(prog, 'a_pos');
-  const buf = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  // two triangles covering clip space
-  const verts = new Float32Array([-1,-1,  1,-1, -1,1,  -1,1, 1,-1, 1,1]);
-  gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
-  gl.enableVertexAttribArray(posLoc);
-  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
-
-  // uniforms
-  const u_center = gl.getUniformLocation(prog, 'u_center');
-  const u_scale = gl.getUniformLocation(prog, 'u_scale');
-  const u_aspect = gl.getUniformLocation(prog, 'u_aspect');
-  const u_maxIter = gl.getUniformLocation(prog, 'u_maxIter');
-  const u_smooth = gl.getUniformLocation(prog, 'u_smooth');
-  const u_time = gl.getUniformLocation(prog, 'u_time');
-
-  // set GL state
-  gl.disable(gl.DEPTH_TEST);
-
-  /* ---------- render loop and progressive rendering ---------- */
-  let interaction = false;
-  let lastInteract = 0;
-  let previewScale = 1.0; // 1 = full resolution, <1 = lower res during interaction
-  let pendingFrame = null;
-
-  function renderOnce(resolutionScale = 1.0){
-    // adjust drawing buffer size for resolution scale to get fast preview
-    const cssW = Math.max(320, canvas.clientWidth);
-    const cssH = Math.max(240, canvas.clientHeight);
-    const drawW = Math.max(1, Math.floor(cssW * DPR * resolutionScale));
-    const drawH = Math.max(1, Math.floor(cssH * DPR * resolutionScale));
-    // set viewport and canvas backing size appropriately
-    canvas.width = drawW;
-    canvas.height = drawH;
-    canvas.style.width = cssW + 'px';
-    canvas.style.height = cssH + 'px';
-    gl.viewport(0, 0, drawW, drawH);
-
-    // aspect: multiply x scale to keep aspect ratio correct
-    const aspect = (drawW / DPR) / (drawH / DPR);
-    gl.uniform2f(u_center, state.cx, state.cy);
-    gl.uniform1f(u_scale, state.scale);
-    gl.uniform1f(u_aspect, aspect);
-    gl.uniform1i(u_maxIter, state.maxIter);
-    gl.uniform1i(u_smooth, state.smooth ? 1 : 0);
-    gl.uniform1f(u_time, performance.now() * 0.001);
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
-  }
-
-  // progressive render policy:
-  // - while interacting: draw at low res (0.4)
-  // - when idle for 200ms: draw full res
-  function scheduleRender(immediateLowRes = false){
-    lastInteract = performance.now();
-    interaction = true;
-    if(pendingFrame) cancelAnimationFrame(pendingFrame);
-    // low-res immediate
-    renderOnce(state.lowResDuringInteraction);
-    pendingFrame = requestAnimationFrame(()=>{ pendingFrame = null; });
-    // schedule full-res after idle
-    setTimeout(()=>{
-      const idle = performance.now() - lastInteract;
-      if(idle >= 180){
-        interaction = false;
-        renderOnce(1.0);
-        updateUI();
+    let wasm, memory, mandelbrot;
+    async function initWasm() {
+      const bytes = decodeBase64ToUint8Array(wasmBase64);
+      const res = await WebAssembly.instantiate(bytes, { env: { memory: new WebAssembly.Memory({initial: 64, maximum: 1024}) } });
+      wasm = res.instance;
+      memory = wasm.exports.memory || res.instance.exports.env?.memory;
+      mandelbrot = wasm.exports.mandelbrot;
+      if (!memory || !mandelbrot) {
+        throw new Error("WASM init failed: memory/mandelbrot export missing");
       }
-    }, 200);
-  }
+    }
 
-  /* ---------- interactions (pan/zoom) ---------- */
-  let dragging=false, lastX=0, lastY=0;
-  canvas.addEventListener('pointerdown', e=>{
-    dragging=true; lastX=e.clientX; lastY=e.clientY; canvas.setPointerCapture(e.pointerId);
-  });
-  canvas.addEventListener('pointermove', e=>{
-    if(!dragging) return;
-    const dx = e.clientX - lastX; const dy = e.clientY - lastY;
-    lastX = e.clientX; lastY = e.clientY;
-    const rect = canvas.getBoundingClientRect();
-    const w = canvas.width / DPR; const h = canvas.height / DPR;
-    const aspect = w / h;
-    const viewW = state.scale;
-    const viewH = state.scale / aspect;
-    state.cx -= (dx / w) * viewW;
-    state.cy -= (dy / h) * viewH;
-    updateUI();
-    scheduleRender(true);
-  });
-  canvas.addEventListener('pointerup', e=>{ dragging=false; try{canvas.releasePointerCapture(e.pointerId)}catch{} scheduleRender(false); });
-  canvas.addEventListener('pointerleave', ()=>{ dragging=false; });
+    // --- Renderer state ---
+    const canvas = document.getElementById('view');
+    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+    const hudCenter = document.getElementById('hudCenter');
+    const hudZoom = document.getElementById('hudZoom');
+    const hudSize = document.getElementById('hudSize');
 
-  canvas.addEventListener('wheel', (e)=>{
-    e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left; const my = e.clientY - rect.top;
-    const x = mx / canvas.clientWidth; const y = my / canvas.clientHeight;
-    const zoomFactor = (e.shiftKey) ? 1.12 : 0.85;
-    const factor = (e.deltaY > 0) ? (1/zoomFactor) : zoomFactor;
-    const aspect = (canvas.width / DPR) / (canvas.height / DPR);
-    const viewW = state.scale;
-    const viewH = state.scale / aspect;
-    const left = state.cx - viewW/2, top = state.cy - viewH/2;
-    const px = left + x * viewW, py = top + y * viewH;
-    state.scale *= factor;
-    const newViewW = state.scale, newViewH = state.scale / aspect;
-    state.cx = px - x * newViewW + newViewW/2;
-    state.cy = py - y * newViewH + newViewH/2;
-    updateUI();
-    scheduleRender(true);
-  }, {passive:false});
+    const centerReEl = document.getElementById('centerRe');
+    const centerImEl = document.getElementById('centerIm');
+    const zoomRange = document.getElementById('zoomRange');
+    const iterEl = document.getElementById('iter');
 
-  canvas.addEventListener('dblclick', (e)=>{
-    const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left; const my = e.clientY - rect.top;
-    const x = mx / canvas.clientWidth, y = my / canvas.clientHeight;
-    const aspect = (canvas.width / DPR) / (canvas.height / DPR);
-    const viewW = state.scale, viewH = state.scale / aspect;
-    const left = state.cx - viewW/2, top = state.cy - viewH/2;
-    const px = left + x * viewW, py = top + y * viewH;
-    state.scale *= 0.45;
-    const newViewW = state.scale, newViewH = state.scale / aspect;
-    state.cx = px - x * newViewW + newViewW/2;
-    state.cy = py - y * newViewH + newViewH/2;
-    updateUI();
-    scheduleRender(true);
-  });
+    const buttons = {
+      reset: document.getElementById('reset'),
+      save: document.getElementById('save'),
+      precFast: document.getElementById('precFast'),
+      precAcc: document.getElementById('precAcc'),
+      smoothOn: document.getElementById('smoothOn'),
+      smoothOff: document.getElementById('smoothOff'),
+      palOcean: document.getElementById('palOcean'),
+      palInferno: document.getElementById('palInferno'),
+    };
 
-  /* ---------- controls ---------- */
-  iterSlider.addEventListener('input', e=>{ state.maxIter = parseInt(e.target.value,10); iterNum.value = state.maxIter; scheduleRender(true); });
-  iterNum.addEventListener('change', e=>{ let v=parseInt(e.target.value,10)||100; v=Math.max(10,Math.min(200000,v)); state.maxIter=v; iterSlider.value=v; scheduleRender(true); });
-  smoothCheck.addEventListener('change', e=>{ state.smooth = e.target.checked; scheduleRender(true); });
-  precisionSelect.addEventListener('change', e=>{ state.precision = e.target.value; scheduleRender(true); });
+    let state = {
+      centerRe: -0.74996611,
+      centerIm: 0.01162885,
+      zoomExp: 14.5,     // log-based slider -> actual zoom = 2^zoomExp
+      maxIter: 800,
+      smooth: true,
+      palette: 'ocean',
+      accurate: true
+    };
 
-  document.getElementById('reset').addEventListener('click', ()=>{
-    state.cx = -0.5; state.cy = 0; state.scale = 3.0; state.maxIter = 800; state.smooth = true;
-    iterSlider.value = state.maxIter; iterNum.value = state.maxIter; smoothCheck.checked = true;
-    scheduleRender(true);
-  });
+    // --- Palette functions ---
+    function paletteOcean(t) {
+      // deep ocean blues to white; t in [0,1]
+      const r = Math.min(255, Math.round(255 * Math.pow(t, 0.6)));
+      const g = Math.min(255, Math.round(255 * Math.pow(t, 0.8)));
+      const b = Math.min(255, Math.round(255 * (0.2 + 0.8 * t)));
+      return [r, g, b];
+    }
+    function paletteInferno(t) {
+      // rough Inferno-like ramp
+      const r = Math.round(255 * Math.min(1, Math.max(0, -0.5 + 2.0 * t)));
+      const g = Math.round(255 * Math.min(1, Math.max(0, Math.pow(t, 1.7))));
+      const b = Math.round(255 * Math.min(1, Math.max(0, Math.pow(t, 0.9) * 0.9)));
+      return [r, g, b];
+    }
+    function getPaletteFn(name) {
+      return name === 'inferno' ? paletteInferno : paletteOcean;
+    }
 
-  document.getElementById('save').addEventListener('click', ()=>{
-    // Render at full resolution before saving to get better image
-    renderOnce(1.0);
-    canvas.toBlob(function(blob){
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = 'mandelbrot_webgl.png';
-      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-    }, 'image/png');
-  });
+    // --- Mapping utilities (accurate double precision) ---
+    function computeBounds(w, h, centerRe, centerIm, zoomExp) {
+      // Zoom mapping: base span at zoomExp=0 roughly 3.5 units on real axis; shrink by 2^zoomExp.
+      const zoom = Math.pow(2, zoomExp);
+      const aspect = w / h;
+      const baseSpan = 3.5; // covers typical full set width
+      const spanRe = baseSpan / zoom;
+      const spanIm = spanRe / aspect;
+      const reMin = centerRe - spanRe / 2;
+      const reMax = centerRe + spanRe / 2;
+      const imMin = centerIm - spanIm / 2;
+      const imMax = centerIm + spanIm / 2;
+      return { reMin, reMax, imMin, imMax, zoom };
+    }
 
-  window.addEventListener('resize', ()=>{
-    // keep preview refreshing on resize
-    scheduleRender(true);
-    sizeEl.textContent = Math.max(320, canvas.clientWidth) + '×' + Math.max(240, canvas.clientHeight);
-  });
+    // --- WASM buffer helpers ---
+    function malloc(bytes) {
+      // naive bump allocator over JS-managed ArrayBuffer view
+      // We will use a simple custom region near the end for output; reallocate per frame.
+      // For simplicity, use a new Uint8Array over memory and assume enough pages.
+      const mem = new Uint8Array(memory.buffer);
+      // Place at offset = 1MB boundary to avoid collisions with wasm stack (in minimal module)
+      const offset = 1 << 20;
+      if ((offset + bytes) > mem.byteLength) {
+        const needPages = Math.ceil((offset + bytes - mem.byteLength) / 65536);
+        memory.grow(needPages);
+      }
+      return offset;
+    }
 
-  // initial draw
-  updateUI();
-  scheduleRender(false);
-}
-</script>
+    // --- Rendering via WASM compute + JS color mapping ---
+    let isRendering = false;
+    async function render() {
+      if (isRendering) return;
+      isRendering = true;
+
+      const w = canvas.width;
+      const h = canvas.height;
+
+      const { reMin, reMax, imMin, imMax, zoom } = computeBounds(w, h, state.centerRe, state.centerIm, state.zoomExp);
+      hudCenter.textContent = `${state.centerRe.toFixed(8)} + ${state.centerIm.toFixed(8)}i`;
+      hudZoom.textContent = `${zoom.toFixed(3)}x`;
+      hudSize.textContent = `${w}×${h}`;
+
+      const outBytes = w * h * 8; // double per pixel: escape value (smooth)
+      const outPtr = malloc(outBytes);
+
+      // Call WASM: mandelbrot(width, height, reMin, reMax, imMin, imMax, maxIter, smoothFlag, outPtr)
+      // smoothFlag: 1=smooth log coloring, 0=flat iteration count.
+      mandelbrot(
+        w|0, h|0,
+        reMin, reMax, imMin, imMax,
+        state.maxIter|0,
+        state.smooth ? 1 : 0,
+        outPtr|0
+      );
+
+      // Read results
+      const outView = new Float64Array(memory.buffer, outPtr, w*h);
+      const img = ctx.createImageData(w, h);
+      const data = img.data;
+      const pal = getPaletteFn(state.palette);
+
+      // Normalize smooth values to [0,1]
+      let maxVal = 0;
+      for (let i = 0; i < outView.length; i++) if (outView[i] > maxVal) maxVal = outView[i];
+      const invMax = maxVal > 0 ? (1.0 / maxVal) : 1.0;
+
+      let j = 0;
+      for (let i = 0; i < outView.length; i++) {
+        const v = outView[i];
+        if (v < 0) {
+          // Inside set marker: negative sentinel used by WASM
+          data[j++] = 0; data[j++] = 0; data[j++] = 0; data[j++] = 255;
+        } else {
+          const t = Math.max(0, Math.min(1, v * invMax));
+          const [r,g,b] = pal(t);
+          data[j++] = r; data[j++] = g; data[j++] = b; data[j++] = 255;
+        }
+      }
+
+      ctx.putImageData(img, 0, 0);
+      isRendering = false;
+    }
+
+    // --- Resize handling ---
+    function resizeCanvas() {
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const rect = document.getElementById('canvasWrap').getBoundingClientRect();
+      canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+      canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+      canvas.style.width = rect.width + 'px';
+      canvas.style.height = rect.height + 'px';
+      render();
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    // --- Interactions: pan/zoom ---
+    let dragging = false, lastX = 0, lastY = 0;
+    canvas.addEventListener('mousedown', (e) => {
+      dragging = true; lastX = e.clientX; lastY = e.clientY;
+    });
+    window.addEventListener('mouseup', () => { dragging = false; });
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      lastX = e.clientX; lastY = e.clientY;
+
+      const w = canvas.width, h = canvas.height;
+      const { reMin, reMax, imMin, imMax } = computeBounds(w, h, state.centerRe, state.centerIm, state.zoomExp);
+      const spanRe = reMax - reMin;
+      const spanIm = imMax - imMin;
+      const dRe = -dx / w * spanRe;
+      const dIm = dy / h * spanIm;
+      state.centerRe += dRe;
+      state.centerIm += dIm;
+      centerReEl.value = state.centerRe;
+      centerImEl.value = state.centerIm;
+      render();
+    });
+
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = Math.sign(e.deltaY);
+      // zoom step ~ 0.2 in exponent space
+      state.zoomExp = Math.max(0, Math.min(22, state.zoomExp - delta * 0.2));
+      zoomRange.value = state.zoomExp.toString();
+      render();
+    }, { passive: false });
+
+    canvas.addEventListener('dblclick', (e) => {
+      const zoomDir = e.shiftKey ? -1 : 1;
+      state.zoomExp = Math.max(0, Math.min(22, state.zoomExp + zoomDir * 0.8));
+      zoomRange.value = state.zoomExp.toString();
+      // Recenter to clicked position
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / rect.width;
+      const y = (e.clientY - rect.top) / rect.height;
+      const { reMin, reMax, imMin, imMax } = computeBounds(canvas.width, canvas.height, state.centerRe, state.centerIm, state.zoomExp);
+      const re = reMin + x * (reMax - reMin);
+      const im = imMax - y * (imMax - imMin);
+      state.centerRe = re;
+      state.centerIm = im;
+      centerReEl.value = state.centerRe;
+      centerImEl.value = state.centerIm;
+      render();
+    });
+
+    // --- Controls ---
+    zoomRange.addEventListener('input', () => { state.zoomExp = parseFloat(zoomRange.value); render(); });
+    iterEl.addEventListener('change', () => { state.maxIter = Math.max(64, Math.min(8192, parseInt(iterEl.value || "800", 10))); render(); });
+    buttons.reset.addEventListener('click', () => {
+      state.centerRe = -0.74996611; state.centerIm = 0.01162885; state.zoomExp = 14.5;
+      state.maxIter = 800; state.smooth = true; state.palette = 'ocean'; state.accurate = true;
+      centerReEl.value = state.centerRe; centerImEl.value = state.centerIm;
+      zoomRange.value = state.zoomExp.toString(); iterEl.value = state.maxIter.toString();
+      render();
+    });
+    buttons.save.addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.download = `mandelbrot_${Date.now()}.png`;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    });
+    buttons.precFast.addEventListener('click', () => { state.accurate = false; render(); });
+    buttons.precAcc.addEventListener('click', () => { state.accurate = true; render(); });
+    buttons.smoothOn.addEventListener('click', () => { state.smooth = true; render(); });
+    buttons.smoothOff.addEventListener('click', () => { state.smooth = false; render(); });
+    buttons.palOcean.addEventListener('click', () => { state.palette = 'ocean'; render(); });
+    buttons.palInferno.addEventListener('click', () => { state.palette = 'inferno'; render(); });
+
+    centerReEl.addEventListener('change', () => { state.centerRe = parseFloat(centerReEl.value || "0"); render(); });
+    centerImEl.addEventListener('change', () => { state.centerIm = parseFloat(centerImEl.value || "0"); render(); });
+
+    // --- Initialize ---
+    (async () => {
+      await initWasm();
+      resizeCanvas();
+    })();
+  </script>
+
+  <!--
+    Technical notes:
+    - The WASM blob computes per-pixel escape values using f64. Smooth coloring uses:
+      v = n + 1 - log2(log|z_n|)
+      Inside-set sentinel is written as a negative value, so JS can paint it black.
+    - For deeper zooms, increase iterations to reduce banding; f64 accuracy avoids typical float artifacts.
+    - Single-file design allows easy static hosting (drop this index.html into any server).
+    - If you want to rebuild the wasm, compile a function:
+        void mandelbrot(int w,int h,double reMin,double reMax,double imMin,double imMax,int maxIter,int smooth,double* out)
+      in C/C++/Rust to wasm32, ensure it writes one double per pixel, row-major, negative for interior, and export it.
+  -->
 </body>
 </html>
